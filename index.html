@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>運行日誌 OCR（honsyo-kadou 専用）</title>
+
+<!-- Tesseract.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.3/dist/tesseract.min.js"></script>
+
+<style>
+body {
+    font-family: sans-serif;
+    padding: 20px;
+    background: #f2f2f2;
+}
+h2 { margin-top: 0; }
+#output {
+    width: 100%;
+    height: 200px;
+    font-size: 14px;
+    white-space: pre;
+}
+button {
+    padding: 10px 20px;
+    margin-top: 10px;
+    font-size: 16px;
+}
+</style>
+</head>
+
+<body>
+
+<h2>🚑 運行日誌OCR（honsyo-kadou専用）</h2>
+
+<input type="file" id="imageFile" accept="image/*"><br><br>
+<button onclick="runOCR()">OCR開始</button>
+<button onclick="clearResult()">クリア</button>
+
+<h3>CSV 出力</h3>
+<textarea id="output" placeholder="ここにCSVが生成されます"></textarea>
+
+<script>
+
+// -------------------------
+// 1と7の補正
+// -------------------------
+function fixHandwritingNumbers(text) {
+    return text
+        .replace(/12:/g, "7:")       // 12:23 → 7:23 の誤認識補正
+        .replace(/l/g, "1")          // l → 1
+        .replace(/I/g, "1");         // I → 1
+}
+
+// -------------------------
+// 行ブロックから必要要素を抽出する
+// -------------------------
+function parseLine(block) {
+
+    block = fixHandwritingNumbers(block);
+
+    const line = block.replace(/\n/g, " ").trim();
+
+    // 時刻（7:23 形式）
+    const times = line.match(/\b\d{1,2}:\d{2}\b/g) || [];
+
+    const outTime = times[0] || "";
+    const inTime  = times[1] || "";
+
+    // メーター 5〜6桁の数字
+    const meter = (line.match(/\b\d{5,6}\b/) || [""])[0];
+
+    // 種別 A〜J（大文字のみ）
+    const typeMatch = (line.match(/\b[A-J]\b/) || [""])[0];
+
+    // 数字群
+    const nums = line.match(/\d+(\.\d+)?/g) || [];
+
+    let dispatchNo = "";
+    let fuel = "";
+
+    // 種別で振り分け
+    if(typeMatch === "D"){
+        // 給油
+        fuel = nums.find(n => !n.includes(":") && (parseFloat(n) < 200)) || "";
+    } else if(typeMatch !== ""){
+        // 出動番号 → 4桁以上の数字
+        dispatchNo = nums.find(n => n.length >= 3 && !n.includes(":")) || "";
+    }
+
+    return {
+        outTime,
+        inTime,
+        dispatchNo,
+        type: typeMatch,
+        meter,
+        fuel
+    };
+}
+
+// -------------------------
+// OCR実行
+// -------------------------
+async function runOCR() {
+
+    const file = document.getElementById("imageFile").files[0];
+    if (!file) {
+        alert("画像を選択してください");
+        return;
+    }
+
+    const output = document.getElementById("output");
+    output.value = "OCR解析中…少し待ってね…";
+
+    // OCR開始
+    const result = await Tesseract.recognize(file, "jpn+eng", {
+        tessedit_char_whitelist: "0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz."
+    });
+
+    let text = result.data.text;
+
+    // 行ブロックに分割（空白2行以上で分割）
+    const blocks = text.split(/\n\s*\n+/);
+
+    let csv = "出庫,入庫,出動番号,種別,距離,給油量\n";
+
+    for(const b of blocks){
+        const d = parseLine(b);
+        if(d.outTime || d.dispatchNo || d.meter || d.fuel){
+            csv += `${d.outTime},${d.inTime},${d.dispatchNo},${d.type},${d.meter},${d.fuel}\n`;
+        }
+    }
+
+    output.value = csv;
+}
+
+function clearResult(){
+    document.getElementById("output").value = "";
+}
+
+</script>
+
+</body>
+</html>
